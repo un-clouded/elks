@@ -10,7 +10,6 @@
 #define UTS_SYSNAME "ELKS"                      /* uname system name */
 #define UTS_NODENAME "elks"                     /* someday set by sethostname() */
 
-#define CONFIG_MSDOS_PARTITION  1               /* support DOS HD partitions */
 #define CONFIG_FS_DEV           1               /* support FAT /dev folder */
 
 /*
@@ -76,7 +75,7 @@
 #define MAX_SERIAL              2       /* max number of serial tty devices*/
 #define SETUP_VID_COLS          80      /* video # columns */
 #define SETUP_VID_LINES         25      /* video # lines */
-#define SETUP_CPU_TYPE          5       /* processor type 80186 */
+#define SETUP_CPU_TYPE          CPU_80186  /* processor type */
 #define SETUP_MEM_KBYTES        512     /* base memory in 1K bytes */
 #define SETUP_XMS_KBYTES        0       /* xms memory in 1K bytes */
 #define SETUP_ROOT_DEV          0x0600  /* root device ROMFS */
@@ -94,7 +93,7 @@
 #define MAX_SERIAL              1       /* max number of serial tty devices*/
 #define SETUP_VID_COLS          28      /* video # columns */
 #define SETUP_VID_LINES         18      /* video # lines */
-#define SETUP_CPU_TYPE          5       /* processor type 80186 */
+#define SETUP_CPU_TYPE          CPU_80186  /* processor type */
 #define SETUP_MEM_KBYTES        128     /* base memory in 1K bytes */
 #define SETUP_XMS_KBYTES        0       /* xms memory in 1K bytes */
 #define SETUP_ROOT_DEV          0x0600  /* root device ROMFS */
@@ -107,13 +106,28 @@
 #define SETUP_USERHEAPSEG       0x1000  /* start segment for appiication memory heap */
 #endif /* CONFIG_ARCH_SWAN */
 
+#ifdef CONFIG_ARCH_SOLO86
+#define MAX_SERIAL              0       /* max number of serial tty devices*/
+#define SETUP_VID_COLS          80      /* video # columns */
+#define SETUP_VID_LINES         25      /* video # lines */
+#define SETUP_CPU_TYPE          CPU_80286  /* processor type */
+#define SETUP_MEM_KBYTES        512     /* base memory in 1K bytes */
+#define SETUP_XMS_KBYTES        0       /* xms memory in 1K bytes */
+#define SETUP_ROOT_DEV          0x0600  /* root device ROMFS */
+#define SETUP_ELKS_FLAGS        0       /* flags for root device type */
+#define SETUP_PART_OFFSETLO     0       /* partition offset low word */
+#define SETUP_PART_OFFSETHI     0       /* partition offset high word */
+#define SYS_CAPS                0       /* no XT/AT capabilities */
+#define UTS_MACHINE             "Solo/86"
+#endif /* CONFIG_ARCH_SOLO86 */
+
 /* linear address to start XMS buffer allocations from */
 #define XMS_START_ADDR    0x00100000L	/* 1M */
 //#define XMS_START_ADDR  0x00FA0000L	/* 15.6M (Compaq with only 1M ram) */
 
 /*
  * System capabilities - configurable for ROM or custom installations.
- * Normally, all capabilities will be set if arch_cpu > 5 (PC/AT),
+ * Normally, all capabilities will be set if arch_cpu >= CPU_80286 (PC/AT),
  * except when SYS_CAPS is defined for custom installations or emulations.
  */
 #define CAP_PC_AT       (CAP_IRQ8TO15|CAP_IRQ2MAP9)      /* PC/AT capabilities */
@@ -144,6 +158,8 @@
 
 #if defined(CONFIG_BLK_DEV_BFD) || defined(CONFIG_BLK_DEV_BHD)  /* BIOS driver */
 #define DMASEGSZ        0x0400      /* BLOCK_SIZE (1024) for external XMS/DMA buffer */
+#elif defined(CONFIG_FS_XMS) && defined(CONFIG_BLK_DEV_ATA_CF)
+#define DMASEGSZ        0x200       /* ATA_SECTOR_SIZE (512) XMS buffer for ATA CF */
 #else
 #define DMASEGSZ        0           /* no external XMS/DMA buffer */
 #endif
@@ -161,7 +177,7 @@
 #define TRACKSEG        (DMASEG+(DMASEGSZ>>4))
 #define DMASEGEND       (DMASEG+(DMASEGSZ>>4)+(TRACKSEGSZ>>4))
 #else
-#define DMASEGEND       DMASEG      /* no DMASEG buffer */
+#define DMASEGEND       (DMASEG+(DMASEGSZ>>4))
 #endif
 
 /* Define segment locations of low memory, must not overlap */

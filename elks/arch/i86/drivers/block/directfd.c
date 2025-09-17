@@ -80,6 +80,8 @@
 #include <linuxmt/errno.h>
 #include <linuxmt/string.h>
 #include <linuxmt/heap.h>
+#include <linuxmt/genhd.h>
+#include <linuxmt/devnum.h>
 #include <linuxmt/debug.h>
 
 #include <arch/dma.h>
@@ -89,7 +91,6 @@
 #include <arch/irq.h>
 #include <arch/segment.h>
 #include <arch/ports.h>
-#include <arch/hdreg.h>         /* for ioctl GETGEO */
 
 #define MAJOR_NR        FLOPPY_MAJOR
 #include "blk.h"
@@ -464,11 +465,11 @@ static void DFPROC setup_DMA(void)
     unsigned long dma_addr;
 
     count = numsectors << 9;
+#pragma GCC diagnostic ignored "-Wshift-count-overflow"
     use_xms = req->rq_seg >> 16;
     if (use_xms)
         use_bounce = 0;                 /* XMS buffers also always 1K aligned */
     else {
-#pragma GCC diagnostic ignored "-Wshift-count-overflow"
         physaddr = (req->rq_seg << 4) + (unsigned int)req->rq_buffer;
         use_bounce = (physaddr + count) < physaddr;
     }
@@ -1202,7 +1203,7 @@ static void DFPROC redo_fd_request(void)
     numsectors = req->rq_nr_sectors;
 #ifdef CONFIG_TRACK_CACHE
     use_cache = (command == FD_READ) && (req->rq_errors < 4)
-        ; //&& (arch_cpu != 7 || running_qemu);     /* disable cache on 32-bit systems */
+        ; //&& (arch_cpu != CPU_80386 || running_qemu); /* disable cache on 32-bit systems */
     if (use_cache) {
         /* full track caching only if cache large enough */
         if (CACHE_FULL_TRACK && floppy->sect < CACHE_SIZE)
@@ -1457,7 +1458,7 @@ static int DFPROC get_fdc_version(void)
     }
     switch (reply_buffer[0]) {
     case 0x80:
-        if (arch_cpu > 5) {     /* 80286 CPU PC/AT or better */
+        if (arch_cpu >= CPU_80286) {     /* PC/AT or better */
             type = FDC_TYPE_8272PC_AT;
             name = "8272A (PC/AT)";
         } else {
@@ -1505,11 +1506,14 @@ static int DFPROC floppy_register(void)
 
 void INITPROC floppy_init(void)
 {
-    if (register_blkdev(MAJOR_NR, DEVICE_NAME, &floppy_fops)) {
-        printk("df: init error\n");
+    if (dev_disabled(DEV_DF0)) {
+        printk("df0: disabled\n");
         return;
     }
+    if (register_blkdev(MAJOR_NR, DEVICE_NAME, &floppy_fops))
+        return;
     blk_dev[MAJOR_NR].request_fn = DEVICE_REQUEST;
+
     if (!USE_IMPLIED_SEEK)
         USE_IMPLIED_SEEK = running_qemu;
     config_types();

@@ -33,7 +33,10 @@
 #define MAX_INIT_SLEN   80      /* max # words of args + environ passed to /bin/init */
 #define MAX_UMB         3       /* max umb= segments in /bootopts */
 
+#define ARRAYLEN(a)     (sizeof(a)/sizeof(a[0]))
+
 struct netif_parms netif_parms[MAX_ETHS] = {
+
     /* NOTE:  The order must match the defines in netstat.h:
      * ETH_NE2K, ETH_WD, ETH_EL3    */
     { NE2K_IRQ, NE2K_PORT, 0, NE2K_FLAGS },
@@ -45,9 +48,11 @@ int root_mountflags;
 int tracing;
 int nr_ext_bufs, nr_xms_bufs, nr_map_bufs;
 int xms_bootopts;
+int ata_mode = -1;              /* =AUTO default set ATA CF driver mode automatically */
 char running_qemu;
 static int boot_console;
 static segext_t umbtotal;
+static kdev_t disabled[4];      /* disabled devices using disable= */
 static char bininit[] = "/bin/init";
 static char binshell[] = "/bin/sh";
 #ifdef CONFIG_SYS_NO_BININIT
@@ -90,7 +95,6 @@ static struct {
 } opts;
 
 extern int boot_rootdev;
-static char * INITPROC root_dev_name(int dev);
 static int INITPROC parse_options(void);
 static void INITPROC finalize_options(void);
 static char * INITPROC option(char *s);
@@ -231,6 +235,10 @@ static void INITPROC kernel_banner(seg_t init, seg_t extra)
     printk("WonderSwan, ");
 #endif
 
+#ifdef CONFIG_ARCH_SOLO86
+    printk("Solo/86 machine, ");
+#endif
+
     printk("syscaps %x, %uK base ram, %d tasks, %d files, %d inodes\n",
         sys_caps, SETUP_MEM_KBYTES, max_tasks, nr_file, nr_inode);
     printk("ELKS %s (%u text, %u ftext, %u data, %u bss, %u heap)\n",
@@ -312,21 +320,23 @@ static void init_task(void)
     do_init_task();
 }
 
-#ifdef CONFIG_BOOTOPTS
 static struct dev_name_struct {
     const char *name;
     int num;
 } devices[] = {
-	/* the 4 partitionable drives must be first */
-	{ "hda",     DEV_HDA },
+	/* the 6 partitionable drives must be first */
+	{ "hda",     DEV_HDA },         /* 0 */
 	{ "hdb",     DEV_HDB },
 	{ "hdc",     DEV_HDC },
 	{ "hdd",     DEV_HDD },
-	{ "fd0",     DEV_FD0 },
+	{ "cfa",     DEV_CFA },
+	{ "cfb",     DEV_CFB },
+	{ "fd0",     DEV_FD0 },         /* 6 */
 	{ "fd1",     DEV_FD1 },
-	{ "df0",     DEV_DF0 },
+	{ "df0",     DEV_DF0 },         /* 8 */
 	{ "df1",     DEV_DF1 },
-	{ "ttyS0",   DEV_TTYS0 },
+	{ "rom",     DEV_ROM },
+	{ "ttyS0",   DEV_TTYS0 },       /* 11 */
 	{ "ttyS1",   DEV_TTYS1 },
 	{ "tty1",    DEV_TTY1 },
 	{ "tty2",    DEV_TTY2 },
@@ -339,16 +349,19 @@ static struct dev_name_struct {
  * Convert a root device number to name.
  * Device number could be bios device, not kdev_t.
  */
-static char * INITPROC root_dev_name(int dev)
+char *root_dev_name(kdev_t dev)
 {
     int i;
+    unsigned int mask;
 #define NAMEOFF 13
     static char name[18] = "ROOTDEV=/dev/";
 
-    for (i=0; i<5; i++) {
-        if (devices[i].num == (dev & 0xfff0)) {
+    name[8] = '/';
+    for (i=0; i<11; i++) {
+        mask = (i < 6)? 0xfff8: 0xffff;
+        if (devices[i].num == (dev & mask)) {
             strcpy(&name[NAMEOFF], devices[i].name);
-            if (i < 4) {
+            if (i < 6) {
                 if (dev & 0x07) {
                     name[NAMEOFF+3] = '0' + (dev & 7);
                     name[NAMEOFF+4] = '\0';
@@ -357,9 +370,22 @@ static char * INITPROC root_dev_name(int dev)
             return name;
         }
     }
-    return NULL;
+    name[8] = '\0';     /* just return "ROOTDEV=" on not found */
+    return name;
 }
 
+/* return true if device disabled in disable= list */
+int INITPROC dev_disabled(int dev)
+{
+    int i;
+
+    for (i=0; i < ARRAYLEN(disabled); i++)
+        if (disabled[i] == dev)
+            return 1;
+    return 0;
+}
+
+#ifdef CONFIG_BOOTOPTS
 /*
  * Convert a /dev/ name to device number.
  */
@@ -434,6 +460,21 @@ static void INITPROC parse_umb(char *line)
             }
         }
     } while((p = strchr(p+1, ',')));
+}
+
+static void INITPROC parse_disable(char *line)
+{
+    char *p = line;
+    kdev_t dev;
+    int n = 0;
+
+    do {
+        dev = parse_dev(p);
+        disabled[n++] = dev;
+        p = strchr(p+1, ',');
+        if (p)
+            *p++ = 0;
+    } while (p && n < ARRAYLEN(disabled));
 }
 
 /*
@@ -553,6 +594,10 @@ static int INITPROC parse_options(void)
             nr_xms_bufs = (int)simple_strtol(line+7, 10);
             continue;
         }
+        if (!strncmp(line,"xtide=",6)) {
+            ata_mode = (int)simple_strtol(line+6, 10);
+            continue;
+        }
         if (!strncmp(line,"cache=",6)) {
             nr_map_bufs = (int)simple_strtol(line+6, 10);
             continue;
@@ -579,6 +624,10 @@ static int INITPROC parse_options(void)
         }
         if (!strncmp(line,"umb=",4)) {
             parse_umb(line+4);
+            continue;
+        }
+        if (!strncmp(line,"disable=",8)) {
+            parse_disable(line+8);
             continue;
         }
         if (!strncmp(line,"TZ=",3)) {
