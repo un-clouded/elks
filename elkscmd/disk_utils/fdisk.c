@@ -334,7 +334,7 @@ void write_out()
         if (i != 512) {
             printf("Error writing partition table to %s (%d)\n", errno);
         } else
-            printf("Partition table written to %s\n",dev);
+            printf("Partition table written to %s.  Reboot to use new table.\n",dev);
     }
 }
 
